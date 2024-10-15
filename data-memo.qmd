@@ -6,24 +6,55 @@ format: pdf
 editor: source
 ---
 
-```{r, message = F, echo = F}
-library(nflfastR)
-library(tidyverse)
-```
-
-
-```{r}
-data_2020 <- 
-```
-
 # Dataset Overview
 
-The dataset I will be using is from an NFL package in r, [nflfastR](https://www.nflfastr.com/). The dataset contains detailed play-by-play data about all games from 1999 until the most recent set of games (including this past Sunday's games, as the season is currently onging). The data specifically comes from the nflreadr library within the nflfastR package.  
+The dataset I will be using is from an NFL package in r, [nflfastR](https://www.nflfastr.com/). The dataset contains detailed play-by-play data about all games from 1999 until the most recent set of games (including this past Sunday's games, as the season is currently onging). The data specifically comes from the [nflreadr](https://nflreadr.nflverse.com/) datasets from nflverse within the nflfastR package.  
 
-I will be using data from the 1999 season until the 
+I will be using data from the 1999 season until the 2024 season, which in total is 1,197,099 observations and 372 variables. The variables include specific game action information (passes, runs, interceptions, etc) and game context (quarter, time elapsed, timeouts remaining, etc). I will have to narrow down the number of predictors, since there are many that are not relevant to my data specifically, as I'm only interested in the statistics related to "momentum". The data has categorical, numeric, and binary/boolean data, so I will have to keep that in account when constructing my model outlines. There isn't much missing data overall, so since I have lots of data points, I will most likely just check for context-specific patterns in the missingness (many values may be missing if they don't apply in specific situations), and potentially not use those games for which important points are missing. If larger quantities are found to be missing later, I'll use multiple imputation or bootlegging to impute the data.
 
 # Research Questions
 
+I aim to quantify and predict the "momentum" of an NFL game based on play-by-play data. Specifically, I want to answer:
+
+### Research Question: 
+
+How can "momentum" be measured and predicted using key in-game statistics?
+
+In football, "momentum" is a largely unofficial term referring intuitively to how successful a team has been in its last few drives emphasizing heavily on key plays such as 4th down stops, turnovers, and big plays on offense/defense. I will aggregate various such stats such as 4th down stops, turnovers, last few drives, and scoring events to define a custom "momentum" metric.
+
+### Response/Outcome Variable:
+
+My primary outcome variable is drive outcome (success/failure), and I will use the custom momentum metric as a predictor.
+Additionally, I may also explore predicting game outcomes (win/loss) and individual play outcomes (e.g., yardage gained or whether the play results in a scoring opportunity).
+
+### Classification or Regression:
+
+The task of predicting game or drive outcomes would be best suited for a classification approach (e.g., predicting win/loss, success/failure). For predicting continuous values like the point spread or expected yardage gain, I will use a regression approach. It may be a binary classification approach, or based on the model performance/fit, I may increase it to add more specific categories such as touchdowns, turnovers, field goals, etc to include the different aspects of the game.
+
+### Predictors: 
+
+I anticipate that variables such as time left in the game, score differential, field position, and recent key events (e.g., turnovers, touchdowns) will be particularly useful in building the momentum metric.
+
+### Goal: 
+
+The goal of this model is both predictive (forecasting the game or drive outcomes) and descriptive (quantifying momentum and analyzing its effect on play results).
+
 # Project Timeline
 
+Week 1-2: Data collection (using nflreadr), cleaning, and preliminary feature engineering. Begin creating the custom "momentum" metric by aggregating key stats.
+
+Week 3: Conduct exploratory data analysis (EDA) to visualize key relationships between momentum, game progress, and outcomes. Identify any missing data and address accordingly.
+
+Week 4-5: Implement machine learning models (classification and regression) to predict game or drive outcomes using momentum. Begin tuning models and cross-validation.
+
+Week 6: Evaluate the model, compare the performance of different algorithms, and finalize analysis. Begin drafting the final project report.
+
+Week 7: Finalize the project report, including visualizations and interpretation of results.
+
 # Concerns
+
+One potential challenge I foresee is the subjectivity involved in defining and calculating a "momentum" score. This will require some experimentation and validation to ensure it accurately reflects game dynamics. Some resources exist online where people attempted similar problems, so taking inspiration from those would be a resource for me.
+
+Additionally, given the size of the dataset (over 1 million rows), computational efficiency may become an issue, especially during model training. I may need advice on optimizing performance, potentially just cutting down on observations as my main method.
+
+Finally, drive success is an outcome variable to try and predict, but what I'm also greatly interested in is how the custom "momentum" variable affects other variables within the dataset, so I need to work to streamline my goals to make them more clear.
