@@ -9,16 +9,11 @@ editor: source
 ```{r, message = F, echo = F}
 library(nflfastR)
 library(tidyverse)
-
 ```
 
 
 ```{r}
-for (year in 2018:2024){
-  data_year <- load_pbp(year)
-  file_name <- paste0(year, "_pbp_data.csv")
-  write_csv(data_year, file_name)
-}
+data_2020 <- 
 ```
 
 # Dataset Overview
