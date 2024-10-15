@@ -1,0 +1,34 @@
+---
+title: "Data Memo"
+author: "Aditya Iyer"
+date: "2024-10-14"
+format: pdf
+editor: source
+---
+
+```{r, message = F, echo = F}
+library(nflfastR)
+library(tidyverse)
+
+```
+
+
+```{r}
+for (year in 2018:2024){
+  data_year <- load_pbp(year)
+  file_name <- paste0(year, "_pbp_data.csv")
+  write_csv(data_year, file_name)
+}
+```
+
+# Dataset Overview
+
+The dataset I will be using is from an NFL package in r, [nflfastR](https://www.nflfastr.com/). The dataset contains detailed play-by-play data about all games from 1999 until the most recent set of games (including this past Sunday's games, as the season is currently onging). The data specifically comes from the nflreadr library within the nflfastR package.  
+
+I will be using data from the 1999 season until the 
+
+# Research Questions
+
+# Project Timeline
+
+# Concerns
