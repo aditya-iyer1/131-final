@@ -1,0 +1,106 @@
+---
+title: "Primary File"
+author: "Aditya Iyer"
+date: "2024-11-01"
+format: pdf
+editor: source
+---
+
+# Working with sb_2016 --> Written in from eda.qmd file
+
+
+View:
+```{r}
+sb_2016 |> 
+  select(play_id, desc, momentum, home_score_diff, home_team, posteam, posteam_score, defteam_score) |> 
+  View()
+
+# Where is momentum NA
+sb_2016 |> 
+  filter(is.na(momentum)) |> 
+  select(play_id, desc, momentum, home_score_diff, home_team, posteam) |> 
+  View()
+```
+
+Formulating basic momentum metric:
+
+Momentum represents the *momentum score*, an arbitrary number defining the momentum at the time for the HOME TEAM
+```{r}
+sb_2016 <- sb_2016 |> 
+  mutate(
+    momentum = 0,  # Start with the baseline momentum
+    momentum = momentum + 3,  # Add home advantage (arbitrary starting value)
+    momentum = momentum + (home_score_diff / 14),  # Adjust by home team score differential
+    momentum = momentum + home_wp_post / 2, #Adjust by home win probability
+    momentum = momentum + case_when(
+      drive_start_transition == "FUMBLE" ~ 1.5,
+      drive_start_transition == "PUNT" ~ 0.5,
+      drive_start_transition == "INTERCEPTION" ~ 2,
+      drive_start_transition == "BLOCKED_PUNT" ~ 2.5,
+      drive_start_transition == "BLOCKED_FG" ~ 2,
+      drive_start_transition == "MISSED_FG" ~ 0.5,
+      drive_start_transition == "DOWNS" ~ 0.5,
+      drive_start_transition == "MUFFED_KICKOFF" ~ 1,
+      drive_start_transition == "MUFFED_PUNT" ~ 1,
+      drive_start_transition == "KICKOFF" ~ 0.5,
+      drive_start_transition == "ONSIDE_KICK" ~ 1.5,
+      drive_start_transition == "BLOCKED_FG,_DOWNS" ~ 2,
+      drive_start_transition == "BLOCKED_PUNT,_DOWNS" ~ 2.5,
+      TRUE ~ 0 # Default to 0 for NA or "UNKNOWN"
+    ) + if_else(posteam == home_team, 1, -1), # Add how drive started as way to improve/decrease momentum
+    momentum = jitter(momentum) # Add random error to momentum
+  ) |> 
+  fill(momentum, .direction = "down")  # Fill NA values with previous non-NA value
+
+
+```
+
+
+**drive_start_transition**: String indicating how the offense got the ball.
+Values:
+
+[1] NA                    "KICKOFF"             "PUNT"               
+ [4] "FUMBLE"              "MISSED_FG"           "DOWNS"              
+ [7] "INTERCEPTION"        "MUFFED_KICKOFF"      "MUFFED_PUNT"        
+[10] "BLOCKED_FG"          "ONSIDE_KICK"         "BLOCKED_PUNT"       
+[13] "UNKNOWN"             "BLOCKED_FG,_DOWNS"   "BLOCKED_PUNT,_DOWNS"
+[16] "OWN_KICKOFF" 
+
+**drive_end_transition**: String indicating how the offense lost the ball
+[1] NA                    "PUNT"                "FUMBLE"             
+ [4] "FIELD_GOAL"          "TOUCHDOWN"           "END_HALF"           
+ [7] "MISSED_FG"           "DOWNS"               "END_GAME"           
+[10] "INTERCEPTION"        "FUMBLE,_SAFETY"      "SAFETY"             
+[13] "BLOCKED_FG"          "BLOCKED_PUNT"        "BLOCKED_FG,_DOWNS"  
+[16] "BLOCKED_PUNT,_DOWNS"
+
+
+Plotting Momentum over the game duration:
+```{r}
+sb_2016 |> 
+  ggplot(aes(
+    x = play_id,
+    y = momentum
+  )) + 
+  geom_line() + 
+  labs(
+    x = "Play Number",
+    y = "Momentum",
+    title = "Momentum Over Time"
+  )
+
+sb_2016 |> 
+  ggplot(aes(
+    x = play_id,
+    y = home_wp
+  )) + 
+  geom_line() + 
+  labs(
+    x = "Play Number",
+    y = "Home WP",
+    title = "Home WP Over Time"
+  )
+  
+```
+
+

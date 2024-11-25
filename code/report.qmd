@@ -1,0 +1,171 @@
+---
+title: "Analyzing Momentum and its Effect in the NFL"
+subtitle: "PSTAT 131 Final Project"
+author: "Aditya Iyer"
+date: "2024-11-19"
+format: pdf
+editor: source
+---
+
+
+
+# Introduction
+
+- Minimum of two
+paragraphs with complete
+sentences. Should define
+any necessary vocabulary
+terms, briefly explain
+relevant concepts, and
+discuss the primary goals of
+the project.
+
+### Data Source
+
+- Describe the
+source of the dataset. Write
+a formal citation. Provide a
+link to the source, if
+possible
+
+# EDA
+
+- A section of the
+report is dedicated to EDA
+(exploratory data analysis).
+It should come at the
+beginning of the report, just
+after the introduction.
+
+- At least 3 plots
+or tables are included in the
+EDA. They can be the same
+type or different types. For
+example, a correlation
+matrix, a histogram, a
+scatterplot, box plot, etc. 
+
+- There is written
+text all throughout the EDA
+section, narrating and
+describing the analysis and
+plots/tables. Every result or
+plot included in the report
+should have some text
+accompanying it and
+interpreting it.
+
+### Missing Data
+
+- The amount and
+pattern of missing data in
+the dataset is described.
+Missing data is handled
+appropriately. If there is no
+missing data, the report
+should specifically mention
+this.
+
+# Model Selection
+
+- Data are split into
+training and testing sets,
+with an appropriate
+proportion in each; most of
+the data should be used for
+training (at least 70%; 60%
+is fine if the dataset is very
+large (say, over 100k
+observations)
+
+- When the data are
+split, they are stratified on
+the outcome variable. This
+is done both for the training
+and testing split and for
+resampling (i.e. cross-
+validation).
+
+- The model is set
+up appropriately; the
+outcome variable is a
+function of the predictor
+variables. Any categorical
+features are dummy- or one-
+hot encoded. Features are
+centered and scaled, at
+least for those models that
+require centering and
+scaling.
+
+
+- k-fold cross-
+validation is correctly
+implemented on the training
+dataset and used to fit
+models.
+
+# Model Fitting
+
+- Four or more
+types of model are fit. These
+can consist of any of the
+following: Standard linear or
+logistic regression, LDA,
+QDA, elastic net, pruned
+decision tree, random forest,
+gradient boosted tree,
+support vector machines, k-
+means clustering,
+hierarchical clustering, PCA,
+or a neural network. For
+projects dealing with
+complicated data structures
+(like image recognition) or if
+you received prior approval,
+you can fit other model
+types instead. The correct
+models should be fit for the
+problem; i.e., classification
+models should not be used
+for regression problems and
+vice versa.
+
+
+- Any model types
+fit that can be tuned are
+tuned with cross-validation.
+Reasonable ranges are
+used for relevant
+hyperparameters. Results of
+tuning are presented either
+with plots or tables.
+
+- Only the best one
+or two models are used to
+predict the testing set. Their
+testing error is reported
+
+ 
+# Conclusion
+
+- Minimum of two
+paragraphs with complete
+sentences. Should
+summarize the main results
+of the paper, discuss which
+models did best, and briefly
+mention possibilities for
+future models/research.
+
+- There is written
+text all throughout the
+report, narrating and
+describing the analysis and
+plots/tables. Every result or
+plot included in the report
+should have some text
+accompanying it and
+interpreting it. The report
+flows well and can be read
+smoothly, like a paper.

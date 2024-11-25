@@ -1,0 +1,14 @@
+Full Data Dictionary
+
+
+
+5 points: A codebook is
+included that identifies and
+briefly describes every
+variable in the dataset. If the
+dataset is large, with a lot of
+variables, it consists of a
+separate file, .txt or .doc. If
+the dataset is relatively
+small, it can be included in
+the long form project report.
