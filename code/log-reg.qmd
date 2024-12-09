@@ -1,0 +1,102 @@
+---
+title: "Logistic Regression"
+author: "Aditya Iyer"
+date: "2024-12-08"
+format: pdf
+editor: source
+---
+
+```{r, warning = F}
+library(here)
+library(tidyverse)
+library(ggrepel)
+library(nflreadr)
+library(nflfastR)
+library(nflplotR)
+library(tidymodels)
+library(visdat)
+tidymodels_prefer()
+
+options(scipen = 9999)
+options(nflreadr.verbose = FALSE)
+```
+
+```{r}
+stats <- read_csv("../data/stats.csv", show_col_types = F)
+
+stats <- stats |> 
+  mutate(
+    win = as.factor(win),
+    return_touchdowns = return_touchdowns + punt_return_touchdowns,
+    return_yards = return_yards + punt_return_yards
+  ) |> 
+  select(-punt_return_touchdowns, -punt_return_yards)
+```
+
+# Begin Modeling
+
+### Logistic Regression
+
+Splits:
+```{r}
+set.seed(34512)
+
+log_split <- initial_split(stats, prop = 0.70,
+                                strata = win)
+log_train <- training(log_split)
+log_test <- testing(log_split)
+```
+
+Creating a Recipe:
+```{r}
+log_recipe <- recipe(win ~ ., data = log_train) |> 
+  step_rm(posteam, game_id, points_allowed, avg_wpa, net_penalty_yards) |> 
+  step_normalize(all_predictors())
+
+
+# Engine:
+
+log_reg <- logistic_reg() |> 
+  set_engine("glm") |> 
+  set_mode("classification")
+
+
+# Workflow:
+
+log_wflow <- workflow() |> 
+  add_model(log_reg) |>  
+  add_recipe(log_recipe)
+
+log_fit <- fit(log_wflow, log_train)
+
+# View fit
+log_fit |> 
+  tidy()
+```
+WAS HAVING ISSUES WITH BOTH POINTS SCORED AND ALLOWED IN MODEL AS POSSIBLE YOU CAN 100% Determine solution with just those two stats
+
+
+
+```{r}
+predict(log_fit, new_data = log_train, type = "prob")
+```
+
+
+
+```{r}
+augment(log_fit, new_data = log_train) |> 
+  conf_mat(truth = win, estimate = .pred_class) |> 
+  autoplot(type = "heatmap")
+```
+
+```{r}
+log_reg_acc_nfl <- augment(log_fit, new_data = log_train) |> 
+  accuracy(truth = win, estimate = .pred_class)
+log_reg_acc_nfl
+```
+
+
+
+
+
+

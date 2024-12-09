@@ -1,23 +1,21 @@
 ---
 title: "Introduction + EDA"
 author: "Aditya Iyer"
-date: "2024-11-01"
+date: "2024-12-08"
 format: pdf
 editor: source
 ---
 
-
-
-
-
-# Loading in package
-```{r}
+# Loading in packages
+```{r, warning = F}
 library(here)
 library(tidyverse)
 library(ggrepel)
 library(nflreadr)
+library(nflfastR)
 library(nflplotR)
 library(tidymodels)
+library(visdat)
 tidymodels_prefer()
 
 options(scipen = 9999)
@@ -25,121 +23,356 @@ options(nflreadr.verbose = FALSE)
 ```
 
 
+# Loadin in Data
+
+Working with data from 2012 - 2020, more data is present but would cause extremely slow models.
+```{r}
+pbp <- nflfastR::load_pbp(2012:2022)
+```
+
+# Making Wins as a Stat
+
+Need to make wins as a stat for game basis and sum for season total wins
+
+```{r}
+stats <- pbp |> 
+  filter(
+    !play_deleted,
+    !is.na(play_type) & play_type != "qb_kneel" & play_type != "spike"
+  ) |> # Filter out irrelevant plays
+  group_by(game_id, posteam)  |> 
+  summarise(
+    # Starting Features
+    total_epa = sum(epa, na.rm = TRUE),
+    avg_epa = mean(epa, na.rm = TRUE),
+    total_wpa = sum(wpa, na.rm = TRUE),
+    avg_wpa = mean(wpa, na.rm = TRUE),
+    pass_touchdowns = sum(pass_touchdown, na.rm = TRUE),
+    rush_touchdowns = sum(rush_touchdown, na.rm = TRUE),
+    rushing_attempts = sum(rush_attempt, na.rm = TRUE),
+    pass_dropbacks = sum(pass_attempt, na.rm = TRUE),
+    success_rate = mean(success, na.rm = TRUE),
+    
+    # Adjusted Penalty Yard Calculation
+    penalties_committed = sum(!is.na(penalty_yards[penalty_team == posteam]), na.rm = TRUE),
+    penalty_yards_committed = sum(penalty_yards[penalty_team == posteam], na.rm = TRUE),
+    
+    # Points Scored and Allowed
+    points_scored = ifelse(unique(posteam) == unique(home_team), max(home_score, na.rm = TRUE), max(away_score, na.rm = TRUE)),
+    points_allowed = ifelse(unique(posteam) == unique(home_team), max(away_score, na.rm = TRUE), max(home_score, na.rm = TRUE)),
+
+    # Yardage and Play Features
+    passing_yards = sum(passing_yards, na.rm = TRUE),
+    rushing_yards = sum(rushing_yards, na.rm = TRUE),
+    yards_gained = sum(yards_gained, na.rm = TRUE),
+    yards_after_catch = sum(yards_after_catch, na.rm = TRUE),
+
+    # EPA Features
+    total_air_epa = sum(air_epa, na.rm = TRUE),
+    avg_air_epa = mean(air_epa, na.rm = TRUE),
+    total_yac_epa = sum(yac_epa, na.rm = TRUE),
+    avg_yac_epa = mean(yac_epa, na.rm = TRUE),
+    total_ep = sum(ep, na.rm = TRUE),
+    avg_ep = mean(ep, na.rm = TRUE),
+
+    # Adjusted Return Stats
+    return_touchdowns = sum(
+      case_when(
+        play_type == "kickoff" & return_team == posteam ~ return_touchdown,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    return_yards = sum(
+      case_when(
+        play_type == "kickoff" & return_team == posteam ~ return_yards,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    
+    # Sacks Taken
+    sacks_taken = sum(sack, na.rm = TRUE),
+    
+    # Completion-Based EPA
+    comp_air_epa_sum = sum(air_epa[complete_pass == 1], na.rm = TRUE), # Sum of air EPA on completions
+    comp_air_epa_avg = mean(air_epa[complete_pass == 1], na.rm = TRUE), # Average of air EPA on completions
+    comp_yac_epa_sum = sum(yac_epa[complete_pass == 1], na.rm = TRUE), # Sum of YAC EPA on completions
+    comp_yac_epa_avg = mean(yac_epa[complete_pass == 1], na.rm = TRUE), # Average of YAC EPA on completions
+    
+    # Completion Probability Metrics
+    avg_cp = mean(cp, na.rm = TRUE), # Average completion probability
+    avg_cpoe = mean(cpoe, na.rm = TRUE), # Average completion percentage over expected
+    
+    .groups = "drop"
+  ) |> 
+  mutate(
+    win = case_when(
+      points_scored > points_allowed ~ 1,
+      points_scored < points_allowed ~ 0,
+      points_scored == points_allowed ~ NA_real_
+    )
+  ) |> 
+  filter(!is.na(posteam), !is.na(win)) # Remove NA values for posteams and ties
+```
+
+```{r}
+# Defense-related (opponent stats, punt returns, and penalties committed against posteam)
+defteam_stats <- pbp |> 
+  filter(
+    !play_deleted,
+    !is.na(play_type) & play_type != "qb_kneel" & play_type != "spike"
+  ) |> 
+  group_by(game_id, defteam) |> 
+  summarise(
+    penalties_committed_by_opponent = sum(!is.na(penalty_yards[penalty_team == defteam]), na.rm = TRUE),
+    penalty_yards_committed_by_opponent = sum(penalty_yards[penalty_team == defteam], na.rm = TRUE),
+    punt_return_touchdowns = sum(
+      case_when(
+        play_type == "punt" & return_team == defteam ~ return_touchdown,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    punt_return_yards = sum(
+      case_when(
+        play_type == "punt" & return_team == defteam ~ return_yards,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) |> 
+  rename(posteam = defteam) |>  # Rename for consistency when merging with posteam stats
+  filter(!is.na(posteam))
+```
+
+```{r}
+# Merge posteam and defteam stats
+final_stats <- stats |> 
+  left_join(defteam_stats, by = c("game_id", "posteam")) |> 
+  mutate(
+    net_penalty_yards = penalty_yards_committed_by_opponent - penalty_yards_committed,
+    win = case_when(
+      points_scored > points_allowed ~ 1,
+      points_scored < points_allowed ~ 0,
+      points_scored == points_allowed ~ NA_real_
+    )
+  ) |> 
+  filter(!is.na(posteam), !is.na(win)) # Remove NA values for posteams and ties
+```
+
 
 # EDA
 
-First, working with just one year: 2016
 
 ```{r}
-pbp_2016 <- load_pbp(2016)
+ggplot(stats, aes(x = as.factor(win), y = pass_touchdowns)) +
+  geom_boxplot(fill = "lightblue", alpha = 0.7) +
+  labs(x = "Win (1) or Loss (0)", y = "Pass Touchdowns") +
+  theme_minimal()
+```
+```{r}
+
+ggplot(stats, aes(x = win, y = avg_epa)) +
+  geom_boxplot(aes(fill = factor(win)), alpha = 0.5) + # Scatter plot with color differentiation for wins
+  labs(
+    x = "Win (1) or Loss (0)", 
+    y = "Net Penalty Yards",
+    title = "Average EPA vs Win/Loss"
+  ) +
+  theme_minimal()
+```
+
+### Analyzing Predictors
+
+```{r}
+str(final_stats)
 ```
 
 
-## Filtering Important Columns 
-
-Manually selecting all relevant seeming columns from the column dictionary (https://www.nflfastr.com/articles/field_descriptions.html)
+total vs avg epa:
 ```{r}
-pbp_mod_2016 <- pbp_2016 |> 
-  select(aborted_play, air_epa, air_wpa, air_yards, assist_tackle, away_score, away_team, away_timeouts_remaining, away_wp, away_wp_post, comp_air_epa, comp_air_wpa, comp_yac_epa, comp_yac_wpa, complete_pass, cp, cpoe, def_wp, defensive_extra_point_attempt, defensive_extra_point_conv, defensive_two_point_attempt, defensive_two_point_conv, defteam, defteam_score, defteam_score_post, defteam_timeouts_remaining, desc, div_game, down, drive, drive_end_transition, drive_end_yard_line, drive_ended_with_score, drive_first_downs, drive_game_clock_start, drive_game_clock_end, drive_inside20, drive_play_count, drive_play_id_ended, drive_play_id_started, drive_quarter_start,drive_quarter_end, drive_start_transition, drive_start_yard_line, drive_time_of_possession, drive_yards_penalized, end_clock_time, end_yard_line, ep, epa, extra_point_attempt, extra_point_prob, extra_point_result, fantasy, fg_prob, field_goal_result, field_goal_attempt, first_down, first_down_pass, first_down_penalty, first_down_rush, fixed_drive, fixed_drive_result, fourth_down_converted, fourth_down_failed, fumble, fumble_forced, fumble_lost, fumble_not_forced, fumble_out_of_bounds, game_half, game_id, game_seconds_remaining, goal_to_go, half_seconds_remaining, home_opening_kickoff, home_score, home_team, home_timeouts_remaining, home_wp, home_wp_post, incomplete_pass, interception, kick_distance, kickoff_attempt, kickoff_downed, kickoff_fair_catch, kickoff_in_endzone, kickoff_inside_twenty, kickoff_out_of_bounds, lateral_receiving_yards, lateral_reception, lateral_recovery, lateral_return, lateral_rush, lateral_rushing_yards, no_huddle, no_score_prob, opp_fg_prob, opp_safety_prob, opp_td_prob, out_of_bounds, own_kickoff_recovery, own_kickoff_recovery_td, pass, pass_attempt, pass_length, pass_oe, pass_touchdown, passing_yards, penalty, penalty_team, penalty_type, penalty_yards, play, play_deleted, play_id, play_type, play_type_nfl, posteam, posteam_score, posteam_score_post, posteam_timeouts_remaining, posteam_type, punt_attempt, punt_blocked, punt_downed, punt_fair_catch, punt_in_endzone, punt_inside_twenty, punt_out_of_bounds, qb_dropback, qb_epa, qb_hit,qb_kneel, qb_scramble, qb_spike, qtr, quarter_end, quarter_seconds_remaining,replay_or_challenge, replay_or_challenge_result, result, return_team, return_touchdown, return_yards, roof, run_gap, rush, rush_attempt, rush_touchdown,sack,safety, safety_prob, score_differential, score_differential_post, season, season_type, series, series_result, series_success, shotgun, side_of_field, sp, special, special_teams_play, spread_line, st_play_type, start_time, success, surface, tackled_for_loss, td_prob, td_team, temp, third_down_converted, third_down_failed, time, time_of_day, timeout, timeout_team, total, total_away_comp_air_epa, total_away_comp_air_wpa, total_away_comp_yac_epa, total_away_comp_yac_wpa, total_away_epa, total_away_pass_epa, total_away_pass_wpa, total_away_raw_air_epa, total_away_raw_air_wpa, total_away_raw_yac_epa, total_away_raw_yac_wpa, total_away_rush_epa, total_away_rush_wpa, total_away_score, total_home_comp_air_epa, total_home_comp_air_wpa, total_home_comp_yac_epa, total_home_comp_yac_wpa, total_home_epa, total_home_pass_epa, total_home_pass_wpa, total_home_raw_air_epa, total_home_raw_air_wpa, total_home_raw_yac_epa, total_home_raw_yac_wpa, total_home_rush_epa, total_home_rush_wpa, total_home_score, total_line, touchback, touchdown, two_point_attempt, two_point_conv_result, two_point_conversion_prob, weather, wp, wpa, xpass, xyac_epa, xyac_fd, xyac_mean_yardage, xyac_median_yardage, xyac_success, yac_epa, yac_wpa, yardline_100, yards_after_catch, yards_gained, ydsnet, ydstogo, yrdln, solo_tackle)
+final_stats$posteam |> unique() |> length() # 32 teams, just a sanity check
+
+final_stats |> 
+  ggplot(aes(
+    x = total_epa
+  )) +
+  geom_density()
+
+final_stats |> 
+  ggplot(aes(
+    x = avg_epa
+  )) +
+  geom_density()
+
+cor(final_stats$total_epa, final_stats$avg_epa, use = "complete.obs")
 ```
 
 
-## Basic Definitions
+total vs avg wpa:
+```{r}
+final_stats |> 
+  ggplot(aes(
+    x = total_wpa
+  )) +
+  geom_density()
 
-*EPA*: Expected points added
-Context-sensitive, measures impact of a play on expected points team will score on that drive. It considers the down, distance, and field position to estimate how many points the offense is likely to score, then compares that estimate before and after the play.
+final_stats |> 
+  ggplot(aes(
+    x = avg_wpa
+  )) +
+  geom_density()
 
-*WPA*: Win probability added 
-WPA measures how much a play changes a team’s chances of winning the game. It takes into account the time remaining, score differential, field position, and down and distance to estimate the probability of winning before and after the play.
+cor(final_stats$total_wpa, final_stats$avg_wpa, use = "complete.obs")
+```
+
+total vs avg air_epa:
+```{r}
+final_stats |> 
+  ggplot(aes(
+    x = total_air_epa
+  )) +
+  geom_density()
+
+final_stats |> 
+  ggplot(aes(
+    x = avg_air_epa
+  )) +
+  geom_density()
+
+cor(final_stats$total_air_epa, final_stats$avg_air_epa, use = "complete.obs")
+```
+
+total vs avg yac_epa:
+```{r}
+final_stats |> 
+  ggplot(aes(
+    x = total_yac_epa
+  )) +
+  geom_density()
+
+final_stats |> 
+  ggplot(aes(
+    x = avg_yac_epa
+  )) +
+  geom_density()
+
+cor(final_stats$total_yac_epa, final_stats$avg_yac_epa, use = "complete.obs")
+```
+
+total vs avg ep:
+```{r}
+final_stats |> 
+  ggplot(aes(
+    x = total_ep
+  )) +
+  geom_density()
+
+final_stats |> 
+  ggplot(aes(
+    x = avg_ep
+  )) +
+  geom_density()
+
+cor(final_stats$total_ep, final_stats$avg_ep, use = "complete.obs")
+```
+
+total vs avg comp_air_epa:
+```{r}
+final_stats |> 
+  ggplot(aes(
+    x = comp_air_epa_sum
+  )) +
+  geom_density()
+
+final_stats |> 
+  ggplot(aes(
+    x = comp_air_epa_avg
+  )) +
+  geom_density()
+
+cor(final_stats$comp_air_epa_sum, final_stats$comp_air_epa_avg, use = "complete.obs")
+```
+Clearly, the average and total epa stats are extremely correlated (as they're effectively communicating the same information)
+
+Columns to remove:
+
+total_epa
+total_wpa
+total_air_epa
+total_yac_epa
+total_ep
+comp_air_epa_sum
+comp_yac_epa_sum
 
 
-Now, going through data columns and aggregating/combining columns that may cover the same information
+
 
 ```{r}
-pbp_fil_2016 <- pbp_mod_2016 |> 
-   mutate(tackle = if_else(solo_tackle == 1 | assist_tackle == 1, 1, 0),
-          first_down_result = case_when(
-            first_down_pass == 1 ~ "pass",
-            first_down_rush == 1 ~ "rush",
-            first_down_penalty == 1 ~ "penalty"
-          ),
-          fourth_down_result = case_when(
-            fourth_down_converted == 1 ~ "converted",
-            fourth_down_failed == 1 ~ "failed"
-          ),
-          touchdown_result = case_when(
-            pass_touchdown == 1 ~ "pass",
-            return_touchdown == 1 ~ "return",
-            rush_touchdown == 1 ~ "rush",
-            touchdown == 1 ~ "other"
-          )) |> 
-  select(-assist_tackle, -first_down, -first_down_pass, -first_down_penalty, -first_down_rush, -fourth_down_converted, -fourth_down_failed, -pass_touchdown, -return_touchdown, -rush_touchdown, -touchdown)
+cor_plot <- final_stats |> 
+  select(-game_id, posteam) |> 
+  correlate()
+
+cor_plot_filtered <- cor_plot |> 
+  stretch() |> 
+  filter(abs(r) > 0.7)
+
+ggplot(cor_plot_filtered, aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", r)), color = "white") +  # Show numeric values on the tiles
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
+```
+I went through these one by one, each correlated stat has a different interpretation so it's important to keep them for now to really understand the model.
+
+# Missing Data
+```{r}
+vis_miss(final_stats)
+```
+No missing data!
+
+# EDA Finished
+
+Write final_stats into CSV for modeling:
+
+```{r}
+final_stats <- final_stats |> 
+  select(-total_epa, -total_wpa, -total_air_epa, -total_yac_epa, -total_ep, -comp_air_epa_sum, -comp_yac_epa_sum)
+
+
+final_stats <- final_stats |> 
+  mutate(
+    win = as.factor(win),
+    return_touchdowns = return_touchdowns + punt_return_touchdowns,
+    return_yards = return_yards + punt_return_yards
+  ) |> 
+  select(-punt_return_touchdowns, -punt_return_yards, -net_penalty_yards, -penalties_committed, -points_scored, -penalties_committed_by_opponent, -yards_gained, -success_rate)
+```
+
+```{r}
+cor_plot <- final_stats |> 
+  select(-game_id, posteam) |> 
+  correlate()
+
+cor_plot_filtered <- cor_plot |> 
+  stretch() |> 
+  filter(abs(r) > 0.7)
+
+ggplot(cor_plot_filtered, aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", r)), color = "white") +  # Show numeric values on the tiles
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for readability
 ```
 
 
-
-
-
-
-# EDA
-
-Working just with one game (Patriots - Falcons 2016 Super Bowl)
 ```{r}
-sb_2016 <- pbp_fil_2016 |> 
-  filter(game_id== "2016_21_NE_ATL") |> 
-  select(-temp, -roof, -surface, -weather, season, -season_type, start_time, time_of_day, -pass_length, -kickoff_in_endzone, -kickoff_downed, -time, )
-```
-
-Can I further aggregate columns? Check on a specific game basis:
-
-
-Key variables for defining momentum:
-
-**drive_first_downs**
-**drive_play_count**
-**drive_time_of_possession**
-**drive_yards_penalized**
-**quarter_end**
-**qtr**
-**yards_gained**
-**game_seconds_remaining**
-**half_seconds_remaining**
-**twp_point_attempt**
-**two_point_conversion_prob**
-**drive_inside20**
-**drive_ended_with_score**
-**home_wp_post**
-**away_wp_post**
-**score_differential**
-**score_differential_post**
-**success**
-**total_home_epa**
-**total_away_epa**
-**fourth_down_result**
-**third_down_converted**
-**turnover**
-**play_type**
-**posteam_type**: String indicating whether the posteam team is home or away.
-
-
-
-```{r}
-sb_2016 <- sb_2016 |> 
-  mutate(play_id = row_number() - 1) |> # Make play ID in regular order counting the plays, will have to change to be game-specific for larger datasets
-  mutate(home_score_diff = if_else(posteam_type == "home", score_differential, -score_differential)) # Create home_score_diff, home_score - away_score
-```
-
-
-What I need is rolling metrics. One by one let me identify these rolling metrics that are important:
-
-Last 3 drives result: Some sort of spectrum, from 3 Scores being highest momentum to 3 turnovers being the worst
-
-
-
-
-Write sb_2016 into its own file for further exploration
-```{r}
-write_csv(sb_2016, here::here("data/sb_2016.csv"))
+library(here)
+write_csv(final_stats, "../data/stats.csv")
 ```
 
 

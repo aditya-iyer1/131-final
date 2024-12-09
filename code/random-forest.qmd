@@ -1,0 +1,173 @@
+---
+title: "Random Forest"
+author: "Aditya Iyer"
+date: "2024-12-08"
+format: pdf
+editor: source
+---
+
+```{r, warning = F}
+library(here)
+library(tidyverse)
+library(ggrepel)
+library(nflreadr)
+library(nflfastR)
+library(nflplotR)
+library(tidymodels)
+library(visdat)
+tidymodels_prefer()
+
+options(scipen = 9999)
+options(nflreadr.verbose = FALSE)
+```
+
+```{r}
+stats <- read_csv("../data/stats.csv", show_col_types = F)
+stats$win <- as.factor(stats$win)
+```
+
+# Modeling
+
+```{r}
+set.seed(3435)
+for_split <- initial_split(stats, prop = 0.70,
+                                strata = win)
+for_train <- training(for_split)
+for_test <- testing(for_split)
+
+for_folds <- vfold_cv(for_train, v = 5, strata = "win")
+```
+
+```{r}
+for_recipe <- recipe(win ~ ., data = for_train) |> 
+  step_rm(posteam, game_id, points_allowed, avg_wpa, avg_air_epa) |> 
+  step_normalize(all_predictors())
+```
+
+```{r}
+rf_class_spec <- rand_forest(mtry = tune(), 
+                           trees = tune(), 
+                           min_n = tune()) |> 
+  set_engine("ranger") |>  
+  set_mode("classification")
+
+rf_class_wf <- workflow() |> 
+  add_model(rf_class_spec) |> 
+  add_recipe(for_recipe)
+```
+
+```{r}
+rf_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        min_n(range = c(10, 20)),
+                        levels = 5)
+rf_grid
+```
+
+```{r}
+tune_class <- tune_grid(
+  rf_class_wf,
+  resamples = for_folds,
+  grid = rf_grid
+)
+```
+ 
+```{r} 
+save(tune_class, file = "tune_class.rda")
+
+load("tune_class.rda")
+
+autoplot(tune_class) + theme_minimal()
+```
+
+```{r}
+show_best(tune_class, n = 1) # Uses ROC_AUC by default
+
+best_rf_class <- select_best(tune_class)
+```
+
+
+# Gradient-Boosted Trees
+
+```{r}
+bt_class_spec <- boost_tree(mtry = tune(), 
+                           trees = tune(), 
+                           learn_rate = tune()) |> 
+  set_engine("xgboost") |> 
+  set_mode("classification")
+
+bt_class_wf <- workflow() |> 
+  add_model(bt_class_spec) |> 
+  add_recipe(for_recipe)
+```
+
+```{r}
+bt_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        learn_rate(range = c(-10, -1)),
+                        levels = 5)
+bt_grid
+```
+
+```{r, eval=FALSE}
+
+tune_bt_class <- tune_grid(
+  bt_class_wf,
+  resamples = for_folds,
+  grid = bt_grid
+)
+```
+
+
+
+
+```{r}
+save(tune_bt_class, file = "tune_bt_class.rda")
+
+load("tune_bt_class.rda")
+
+autoplot(tune_bt_class) + theme_minimal()
+```
+
+```{r}
+show_best(tune_bt_class, n = 1)
+
+best_bt_class <- select_best(tune_bt_class)
+```
+
+
+# Model Selection
+
+```{r}
+final_bt_model <- finalize_workflow(bt_class_wf, best_bt_class)
+final_bt_model <- fit(final_bt_model, for_train)
+```
+
+```{r}
+library(vip)
+final_bt_model |>  extract_fit_parsnip() |> 
+  vip() +
+  theme_minimal()
+```
+
+```{r}
+final_bt_model_test <- augment(final_bt_model, 
+                               for_test) |> 
+  select(win, starts_with(".pred"))
+
+roc_auc(final_bt_model_test, truth = win, .pred_0)
+```
+
+```{r}
+roc_curve(final_bt_model_test, truth = win, .pred_0) |> 
+  autoplot()
+```
+
+```{r}
+conf_mat(final_bt_model_test, truth = win, 
+         .pred_class) |> 
+  autoplot(type = "heatmap")
+```
+
+
+

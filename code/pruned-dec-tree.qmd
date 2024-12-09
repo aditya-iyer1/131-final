@@ -1,0 +1,97 @@
+---
+title: "Random Forest"
+author: "Aditya Iyer"
+date: "2024-12-08"
+format: pdf
+editor: source
+---
+
+```{r, warning = F}
+library(here)
+library(tidyverse)
+library(ggrepel)
+library(nflreadr)
+library(nflfastR)
+library(nflplotR)
+library(tidymodels)
+library(visdat)
+tidymodels_prefer()
+
+options(scipen = 9999)
+options(nflreadr.verbose = FALSE)
+```
+
+
+
+
+
+# Modeling
+
+```{r}
+set.seed(3435)
+pdc_split <- initial_split(stats, strata = "win")
+
+pdc_train <- training(pdc_split)
+pdc_test <- testing(pdc_split)
+
+pdc_folds <- vfold_cv(pdc_train, v = 5, strata = "win")
+```
+
+
+```{r}
+tree_recipe <- recipe(win ~ ., data = pdc_train) |> 
+  step_rm(posteam, game_id, points_allowed, avg_wpa, net_penalty_yards) |> 
+  step_normalize(all_predictors())
+```
+
+```{r}
+tree_spec <- decision_tree(cost_complexity = tune()) |> 
+  set_engine("rpart") |> 
+  set_mode("classification")
+
+tree_wf <- workflow() |> 
+  add_model(tree_spec) |> 
+  add_recipe(tree_recipe)
+```
+
+```{r}
+param_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
+
+tune_tree <- tune_grid(
+  tree_wf, 
+  resamples = pdc_folds, 
+  grid = param_grid
+)
+
+autoplot(tune_tree)
+```
+```{r}
+best_complexity <- select_best(tune_tree)
+
+tree_final <- finalize_workflow(tree_wf, best_complexity)
+
+tree_final_fit <- fit(tree_final, data = pdc_train)
+```
+
+```{r}
+library(rpart.plot)
+
+tree_final_fit |> 
+  extract_fit_engine() |> 
+  rpart.plot(roundint = FALSE)
+```
+
+```{r}
+tree_final_fit |> 
+  extract_fit_engine()
+```
+```{r}
+library(yardstick)
+
+pdc_metrics <- metric_set(roc_auc)
+
+augment(tree_final_fit, new_data = pdc_test) |> 
+  pdc_metrics(win, .pred_0)
+```
+
+

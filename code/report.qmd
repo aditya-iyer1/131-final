@@ -1,171 +1,523 @@
 ---
-title: "Analyzing Momentum and its Effect in the NFL"
-subtitle: "PSTAT 131 Final Project"
+title: "Predicting Wins in the NFL"
+subtitle: "Analyzing what Factors Contribute most to Winning Football Games"
 author: "Aditya Iyer"
-date: "2024-11-19"
-format: pdf
+date: "2024-12-8"
+format: 
+  html:
+      code-fold: show
+      code-summary: "Show Code"
+toc: true
+self-contained: true
 editor: source
 ---
 
+```{r, warning = F, message = F}
+
+# Reading in packages
+library(here)
+library(tidyverse)
+library(ggrepel)
+library(nflreadr)
+library(nflfastR)
+library(nflplotR)
+library(tidymodels)
+library(visdat)
+library(here)
+library(corrr)
+library(corrplot)
+library(rpart.plot)
+library(yardstick)
+library(vip)
+tidymodels_prefer()
+
+options(scipen = 9999)
+options(nflreadr.verbose = FALSE)
+```
 
 
 # Introduction
 
-- Minimum of two
-paragraphs with complete
-sentences. Should define
-any necessary vocabulary
-terms, briefly explain
-relevant concepts, and
-discuss the primary goals of
-the project.
+In this project, I aim to predict the outcome of NFL games (win/loss) based on a variety of game and team features. The primary objective is to identify which features most strongly contribute to a team’s chances of winning a game. Key features include metrics such as Expected Points Added (EPA), which measures the contribution of individual plays to the team’s overall scoring potential, and other variables related to a team’s performance, such as rushing attempts, passing yards, turnovers, and player efficiency. EPA and related EPA-based variables are particularly relevant because they provide a dynamic view of how each play contributes to the overall expected outcome, making it a powerful tool in analyzing the effectiveness of different strategies and player performance in real-time.
+
+The goal of this project is to develop a model that can predict the binary outcome of a game—win or loss—using the available data. By analyzing various predictors, I aim to uncover which factors are the most significant in determining a team’s success. This will involve the use of multiple machine learning algorithms, such as random forests and logistic regression, to ensure robust predictions. I will evaluate the models based on performance metrics like accuracy, AUC-ROC, and other relevant measures to assess their effectiveness. Ultimately, the goal is not just to make accurate predictions but also to provide insights into the most important game features that influence the outcome, offering valuable insights for teams, analysts, and sports enthusiasts.
 
 ### Data Source
 
-- Describe the
-source of the dataset. Write
-a formal citation. Provide a
-link to the source, if
-possible
+The data comes from the [nflfastR](https://www.nflfastr.com/) package, which contains a comprehensive resource for NFL play-by-play data. The nflfastR package provides high-resolution data on NFL games, including detailed information on every play, player statistics, and game events, such as scores, penalties, and player performance metrics. This data is regularly updated and made available through the open-source efforts of the nflfastR community, ensuring accessibility to a wide range of analysts, researchers, and sports enthusiasts.
+
+The dataset includes play-by-play data from NFL games, covering key game features such as rushing attempts, passing yards, expected points added (EPA), and other critical metrics that influence game outcomes. These features are invaluable for conducting in-depth analyses of team and player performance, as well as for developing predictive models like the one in this project. The nflfastR package is widely used in sports analytics, offering a reliable foundation for predicting game outcomes, player performance, and other related metrics.
+
+
 
 # EDA
 
-- A section of the
-report is dedicated to EDA
-(exploratory data analysis).
-It should come at the
-beginning of the report, just
-after the introduction.
+The EDA for this project focuses on understanding and summarizing the rich play-by-play data provided by the nflfastR package. While the dataset includes detailed information about every play, player, and event in each game, the primary goal of the analysis is to aggregate this granular data into a format that is more suitable for modeling game outcomes. Given the large volume and complexity of the raw data, the most important step was to summarize the individual plays into game-level statistics that capture the overall performance of each team.
 
-- At least 3 plots
-or tables are included in the
-EDA. They can be the same
-type or different types. For
-example, a correlation
-matrix, a histogram, a
-scatterplot, box plot, etc. 
+To achieve this, I calculated averages for certain continuous metrics which provide a high-level view of a team’s performance over the course of the game. Additionally, I summed other key statistics, such as passing touchdowns, rushing attempts, penalties, etc., to capture the total contributions in each game. This aggregation allows for a clearer picture of the overall game dynamics and simplifies the analysis, making it easier to identify patterns and relationships that can help predict game outcomes. The next section outlines the specific steps taken in the EDA process, focusing on the transformation of the raw play-by-play data into meaningful game-level metrics.
 
-- There is written
-text all throughout the EDA
-section, narrating and
-describing the analysis and
-plots/tables. Every result or
-plot included in the report
-should have some text
-accompanying it and
-interpreting it.
+
+Reading in the data:
+```{r}
+data <- read_csv("../data/stats.csv", show_col_types = F)
+data$win <- as.factor(data$win)
+```
+
+The original data consists of pbp data, as mentioned I had to transform the data into by-game data, including getting averages and sums of certain stats. The full documentation of data transformation can be found in "/data/intro-eda.qmd". Using the transformed data from the CSV, there are certain plots of interest to look at.
+
+First, it is important to look at the distribution of the outcome. Since the data contains an observation for each team, it makes sense that the outcome should be evenly distributed but it's still important to check this for confirmation.
+
+```{r}
+data |> 
+  ggplot(aes(
+    x = win
+  )) + 
+  geom_bar(fill = "blue") + 
+  theme_bw() + 
+  labs(x = "Outcome (0 = Loss, 1 = Win)",
+       y = "Count",
+       title = "Distribution of Outcome")
+```
+
+Another useful insight to look at is how a key predictor of interest, average epa (Expected Points Added), relates to the outcome. In this context, average EPA for a team for a game means the average amount of 'points added' per play. This takes in context the down, distance, and field position to see how likely you are to score - how many points you are expected to 'add' on a given play. I expect higher values of avg_epa to correlate with wins more than losses.
+
+```{r}
+data |> 
+  ggplot(aes(
+    x = win, 
+    y = avg_epa)) +
+  geom_boxplot(aes(fill = win), alpha = 0.5) + 
+  labs(
+    x = "Win (1) or Loss (0)", 
+    y = "Average EPA for a game",
+    title = "Average EPA vs Win/Loss"
+  ) +
+  theme_minimal()
+```
+
+As expected, in wins, the distribution of average epa has a higher median, higher set of values for the range, and is larger overall.
+
+Another extremely important thing is looking for correlation between my predictors. As mentioned, the "data/intro-eda.qmd" file contains a much more in-depth look at predictors and predictor selection, as many variables were removed due to high correlation with each other. For context, this is because I originally added averages and totals for most epa-related stats (This include yards-after-catch epa, rush-epa, qb-epa, and more). These stats are calculated the same as EPA, but are only related to the specific type of play. For example, on a rush play (Where the quarterback hands the ball off to a running back, and does not pass the ball) there won't be a qb_epa value, but there is a rush_epa. And vice versa, on a pass play, there isn't a rush_epa value, but there is a qb_epa.
+
+I got rid of all the total_epa values since a) they were extremely highly correlated with the avg_epa values (as avg_epa is just total_epa / # of plays), and b) avg_epa is more important because total_epa is skewed by the number of plays run. For example, a team with 20 pass plays but each of them being extremely good plays would have a high average epa. A team with 50 pass plays, each being half as good in EPA terms as the one with 20 pass plays would have half the avg_epa, but more total_epa since the volume of plays is more than double the other team. 
+
+Looking at the correlation AFTER getting rid of many predictors, we get the following correlation plot:
+
+```{r}
+cor_plot <- data |> 
+  select(-game_id, posteam) |> 
+  correlate()
+
+cor_plot_filtered <- cor_plot |> 
+  stretch() |> 
+  filter(abs(r) > 0.7)
+
+ggplot(cor_plot_filtered, aes(x, y, fill = r)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", r)), color = "white") +  
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+```
+
+The plot shows the correlation coefficients for the variables with > 0.7 correlation, the highest correlated variables. Intuitively, they make sense - rushing attempts affects rushing yards, passing attempts affects passing yards, and yards after catch are affected by passing yards. Additionally, comp_air_epa is the epa on COMPLETED pass plays, while air_epa is the epa on completed and incomplete passes - it generates a hypothetical EPA value for plays that were incomplete.
+
+I left these values in the dataset since I believe they are important in the interpretation of models. While more passing attempts does generally mean more passing yards, they are not correlated the same way to winning. Having many passing yards is often decently related to winning, as bad defenses allow many passing yards. However, having many passing attempts often means you're losing for a majority of the game - when teams are winning, they run the ball more as those plays take up more time. Games with low passing attempts and high passing yards are often the best sign of winning as you played extremely efficiently. Similar logic applies for the other predictors, as they all have different roles. I'll address avg_wpa and avg_air_epa before modeling. 
+
+Finally, taking a look at some of the predictors distributions.
+
+```{r}
+data |> 
+  ggplot(aes(
+    x = avg_epa
+  )) + 
+  geom_density() + 
+  theme_bw() + 
+  labs(
+    title = "Density of Average EPA",
+    x = "Average EPA"
+  )
+
+data |> 
+  ggplot(aes(
+    x = pass_touchdowns
+  )) + 
+  geom_bar() + 
+  theme_bw() + 
+  labs(
+    title = "Distribution of Passing Touchdowns",
+    x = "# Of Passing Touchdowns in a Game",
+    y = "Count"
+  )
+
+data |> 
+  ggplot(aes(
+    x = passing_yards
+  )) + 
+  geom_histogram() + 
+  theme_bw() + 
+  labs(
+    title = "Distribution of Passing Yards",
+    x = "Number of Passing Yards",
+    y = "Count"
+  )
+```
+
+It helps that many of the predictors are roughly normally distributed, such as passing yards and average epa. This is to be expected, as data availability is no issue. Additionally, some predictors may be skewed, such as passing yards, but this is expected intuitively and the skew is not major with any of the predictor, when considering outliers may skew certain features.
+
+
+**At least 3 plots or tables are included in the EDA. They can be the same type or different types. For example, a correlation matrix, a histogram, a scatterplot, box plot, etc.**
+
+
+**There is written text all throughout the EDA section, narrating and describing the analysis and plots/tables. Every result or plot included in the report should have some text accompanying it and interpreting it.**
 
 ### Missing Data
 
-- The amount and
-pattern of missing data in
-the dataset is described.
-Missing data is handled
-appropriately. If there is no
-missing data, the report
-should specifically mention
-this.
+**The amount and pattern of missing data in the dataset is described. Missing data is handled appropriately. If there is no missing data, the report should specifically mention this.**
+
+The data was already cleaned and contained very little missing data, as NAs are used in certain situations to represent values that don't apply. For confirmation, the missingness data is charted below: 
+
+```{r}
+vis_miss(data)
+```
+
+As seen, there is no missing data in the dataset.
 
 # Model Selection
 
-- Data are split into
-training and testing sets,
-with an appropriate
-proportion in each; most of
-the data should be used for
-training (at least 70%; 60%
-is fine if the dataset is very
-large (say, over 100k
-observations)
+As this is a classification setting, I chose 4 main models - Logistic Regression, Random Forest, Gradient-Boosted Decision Trees, and Decision Trees.
 
-- When the data are
-split, they are stratified on
-the outcome variable. This
-is done both for the training
-and testing split and for
-resampling (i.e. cross-
-validation).
+Each model will be tuned using 5-fold cross-validation to find the best set of hyperparameters. I will use the tune_grid() function to evaluate combinations of hyperparameters and select the best-performing model on the training set. Here's the generic data split and folds I used to train the models.
 
-- The model is set
-up appropriately; the
-outcome variable is a
-function of the predictor
-variables. Any categorical
-features are dummy- or one-
-hot encoded. Features are
-centered and scaled, at
-least for those models that
-require centering and
-scaling.
+```{r}
+set.seed(3435) #For reproducibility
 
+data_split <- initial_split(data, prop = 0.70,
+                                strata = win)
+data_train <- training(data_split)
+data_test <- testing(data_split)
 
-- k-fold cross-
-validation is correctly
-implemented on the training
-dataset and used to fit
-models.
+data_folds <- vfold_cv(data_train, v = 5, strata = win) # 5-Fold Cross-Validation
+
+dim(data_train)
+dim(data_test)
+```
+
+As shown, the training data has 4,146 observations and 25 predictors, while the test data has 1,778 observations and 25 predictors. This should be enough to run successful models without worrying about sample size.
+
+Recipe:
+
+```{r}
+nfl_recipe <- recipe(win ~ ., data = data_train) |> 
+  step_rm(posteam, game_id, points_allowed, avg_wpa, avg_air_epa) |> 
+  step_normalize(all_predictors())
+```
+
+All the predictors are numerical, which means no dummy encoding is necessary. Additionally, some columns are chosen in step_rm(). Posteam and game_id are identifiers in the data, but are not related to game statistics. Points_allowed is chosen here as I originally included both points_scored and points_allowed in the model, and the model was predicting outcomes with 100% accuracy, and only predictings 1 or 0 for the values. This meant, since the results could be deteremined by just looking at 2 columns, it was messing up modelling. Additionally, I got rid of net_penalty_yards as it's effectively almost a linear combination of penalty_yards committed and penalty_yards allowed (With a slight modification for defensive penalties), but I didn't see it being useful in the model. Finally, I got rid of avg_air_epa, as a hypothetical epa for incomplete plays would be interesting to analyze on its own (It would correlate to teams that are extremely aggressive but don't convert their chance), I didn't see it being helpful to interpret predicting wins in a model.
+
 
 # Model Fitting
 
-- Four or more
-types of model are fit. These
-can consist of any of the
-following: Standard linear or
-logistic regression, LDA,
-QDA, elastic net, pruned
-decision tree, random forest,
-gradient boosted tree,
-support vector machines, k-
-means clustering,
-hierarchical clustering, PCA,
-or a neural network. For
-projects dealing with
-complicated data structures
-(like image recognition) or if
-you received prior approval,
-you can fit other model
-types instead. The correct
-models should be fit for the
-problem; i.e., classification
-models should not be used
-for regression problems and
-vice versa.
+## Logistic Regression
+
+Here's how the logistic regression workflow was set up:
+```{r}
+# Engine:
+
+log_reg <- logistic_reg() |> 
+  set_engine("glm") |> 
+  set_mode("classification")
 
 
-- Any model types
-fit that can be tuned are
-tuned with cross-validation.
-Reasonable ranges are
-used for relevant
-hyperparameters. Results of
-tuning are presented either
-with plots or tables.
+# Workflow:
 
-- Only the best one
-or two models are used to
-predict the testing set. Their
-testing error is reported
+log_wflow <- workflow() |> 
+  add_model(log_reg) |>  
+  add_recipe(nfl_recipe)
 
- 
+log_fit <- fit(log_wflow, data_train)
+
+# View fit
+log_fit |> 
+  tidy()
+```
+
+This table contains the estimates for the various predictors in the model. This is definitely important to me as, no matter the performance of the model, it shows me what predictors are most important in an inference setting. As shown, rushing attempts and avg_epa were postively associated with winning - this makes sense in context, as having a high avg_epa means you ran a lot of plays that are expected to add points, and more rushing attempts, as mentioned earlier, usually means you were trying to run down the clock in a blowout victory.
+
+On the other hand, pass_dropbacks had a negative association with winning. This also makes sense, as teams that are throwing the ball a lot often do so because they're losing, most often by multiple scores. The teams that had many dropbacks (Effectively passing plays) did so because they were losing, and so likely lost that game.
+
+```{r}
+augment(log_fit, new_data = data_train) |> 
+  conf_mat(truth = win, estimate = .pred_class) |> 
+  autoplot(type = "heatmap")
+
+# Generate predictions with probabilities
+log_predictions <- augment(log_fit, new_data = data_train)
+
+# Calculate ROC AUC
+roc_auc_metric <- log_predictions |> 
+  roc_auc(truth = win, .pred_0)
+
+# View the result
+roc_auc_metric
+```
+Looking at the confusion matrix, we can see the model does a pretty good job predicting the right classes. Wins and Losses are evenly distributed, and the predictions and error rates for the model are also roughly evenly distributed. The model has a AUC score of 0.889, which corresponds to pretty good performance.
+
+## Random Forest
+
+The next model I tried was a random forest. The parameters I used are shown below. I chose the hyperparameters after lots of testing, which took a few days of adjustment and these appeared to have the best performance.
+
+```{r}
+# Workflow, etc for reference
+rf_class_spec <- rand_forest(mtry = tune(), 
+                           trees = tune(), 
+                           min_n = tune()) |> 
+  set_engine("ranger") |>  
+  set_mode("classification")
+
+rf_class_wf <- workflow() |> 
+  add_model(rf_class_spec) |> 
+  add_recipe(nfl_recipe)
+
+rf_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        min_n(range = c(10, 20)),
+                        levels = 5)
+```
+
+
+```{r, eval=F}
+tune_class <- tune_grid(
+  rf_class_wf,
+  resamples = data_folds,
+  grid = rf_grid
+)
+```
+
+I had saved the model run in a different file ("/code/random-forest.qmd"), and loaded it in here to save computational time as the model took a long time to run.
+
+```{r, warning = F}
+load("tune_class.rda")
+
+autoplot(tune_class) + theme_bw()
+
+show_best(tune_class, n = 1) # Uses ROC_AUC by default
+
+best_rf_class <- select_best(tune_class)
+```
+
+The models mostly performed similarly, with the best performing model based primarily on the AUC-ROC score appeared to be the model with 3 predictors, 400 trees, and a minimal node size of 17. This was model 88! When looking at general performance of the models, as the number of predictors exceeded 3, the AUC-ROC appeared to decrease, which is interesting, even though the accuracy continued to increase, however marginally.
+
+
+## Gradient-Boosted Trees
+
+The third method I used was Gradient-Boosting Trees. Again, the workflow is below for reference
+```{r}
+
+#Workflow, etc for reference
+
+bt_class_spec <- boost_tree(mtry = tune(), 
+                           trees = tune(), 
+                           learn_rate = tune()) |> 
+  set_engine("xgboost") |> 
+  set_mode("classification")
+
+bt_class_wf <- workflow() |> 
+  add_model(bt_class_spec) |> 
+  add_recipe(nfl_recipe)
+
+
+bt_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        learn_rate(range = c(-10, -1)),
+                        levels = 5)
+```
+
+```{r, eval=FALSE}
+tune_bt_class <- tune_grid(
+  bt_class_wf,
+  resamples = data_folds,
+  grid = bt_grid
+)
+```
+
+I saved this model separately as well, so that I could load it in quickly without needed to rerun the model.
+```{r, warning = F}
+load("tune_bt_class.rda")
+
+autoplot(tune_bt_class) + theme_bw()
+
+show_best(tune_bt_class, n = 1)
+
+best_bt_class <- select_best(tune_bt_class)
+```
+The boosted tree model, with 200 trees and a learning rate of 0.1, demonstrates strong performance with an average ROC AUC of 0.875 across 5 cross-validation folds. This indicates that the model is effective at distinguishing between the two classes in the binary classification task. The use of a low mtry value of 1 suggests that each decision tree is relatively simple, considering only one feature at a time for splitting, which may help prevent overfitting. The moderate learning rate strikes a balance between gradual updates and efficient learning, and the model’s robust performance across multiple iterations (n = 5) reflects its stability and generalizability to new data. Overall, the model appears well-tuned for this task, achieving good classification accuracy while maintaining model simplicity and preventing overfitting.
+
+## Pruned Decision Tree
+
+The final model I fit was a pruned decision tree.
+
+```{r, warning = F}
+tree_spec <- decision_tree(cost_complexity = tune()) |> 
+  set_engine("rpart") |> 
+  set_mode("classification")
+
+tree_wf <- workflow() |> 
+  add_model(tree_spec) |> 
+  add_recipe(nfl_recipe)
+
+param_grid <- grid_regular(cost_complexity(range = c(-3, -1)), levels = 10)
+
+tune_tree <- tune_grid(
+  tree_wf, 
+  resamples = data_folds, 
+  grid = param_grid
+)
+
+autoplot(tune_tree)
+
+best_complexity <- select_best(tune_tree)
+
+tree_final <- finalize_workflow(tree_wf, best_complexity)
+
+tree_final_fit <- fit(tree_final, data = data_train)
+
+tree_final_fit |> 
+  extract_fit_engine() |> 
+  rpart.plot(roundint = FALSE)
+
+pdc_metrics <- metric_set(roc_auc)
+
+augment(tree_final_fit, new_data = data_test) |> 
+  pdc_metrics(win, .pred_0)
+```
+As the cost-complexity parameter increased, the model’s ROC AUC and accuracy decreased, especially after a threshold of around 0.05. This suggests that higher values of the cost-complexity parameter led to more regularization, which likely caused the model to become overly simplistic, reducing its ability to effectively differentiate between classes. Additionally, the increase in Brier score past this point indicates that the model’s predicted probabilities became less accurate, reflecting a decline in its overall predictive performance as regularization intensified.
+
+The AUC-ROC from the best parameter selection was 0.833 in this model, which corresponds with pretty good performance for the model, however not as good as the other 3. The tree diagram is provided here, however this is difficult to interpret in context as this contains the scaled and centered variables, so the data would have to be unscaled to look at the real numbers in context of the game. Clearly, epa and rushing attempts heavily decided guesses in dataset however, as over 50% of the data in the tree was guessed just using combinations of those two variables in certain ranges.
+
+
+# Tuning Parameters
+
+After applying the logistic regression, I wanted to tune the parameters and potentially add penalized regression to see how the model changed.
+
+### Tuning Regression
+
+```{r, warning = F}
+# Tuning
+log_reg_tune <- logistic_reg(mixture = tune(), 
+                              penalty = tune()) |> 
+  set_mode("classification") |> 
+  set_engine("glmnet")
+
+tuned_wflow <- workflow() |>  
+  add_recipe(nfl_recipe) |> 
+  add_model(log_reg_tune)
+
+en_grid <- grid_regular(penalty(range = c(0, 1),
+                                     trans = identity_trans()),
+                        mixture(range = c(0, 1)),
+                             levels = 10)
+
+tune_log_mod <- tune_grid(
+  tuned_wflow,
+  resamples = data_folds, 
+  grid = en_grid
+)
+
+autoplot(tune_log_mod)
+
+# Selection of Tuned
+
+best_log_mod <- select_by_one_std_err(tune_log_mod,
+                          metric = "roc_auc",
+                          penalty,
+                          mixture
+                          )
+best_log_mod
+
+#Generalization
+
+en_final_mod <- finalize_workflow(tuned_wflow,
+                                      best_log_mod)
+
+en_final_mod <- fit(en_final_mod, 
+                        data = data_train)
+
+augment(en_final_mod, new_data = data_train) |> 
+  roc_auc(win, .pred_0)
+```
+As shown in the autoplot, as the amount of regularization increased, the accuracy and ROC AUC appeared to decrease while the Brier score for classification (brier_class) increased. This indicates that the model’s performance deteriorated with stronger regularization, suggesting that excessive regularization may have led to underfitting. With higher regularization, the model likely became too simplistic, reducing its ability to correctly identify patterns in the data, hence the decline in accuracy and ROC AUC. Additionally, the increase in the Brier score suggests that the model’s predicted probabilities were less reliable, with predictions becoming more uncertain and less calibrated.
+
+This is further supported by the best model having a penalty of 0 and a mixture of 0, meaning the model was effectively using no regularization and a purely lasso (L1) approach, which allowed it to fit the data more flexibly without constraints. A penalty of 0 suggests that the model was not penalizing the size of the coefficients, allowing the model to better capture the underlying patterns in the data. Similarly, a mixture of 0 indicates that the model was not incorporating any elastic net regularization, further favoring a more straightforward, unregularized lasso model. This likely contributed to the improved performance, as it avoided the over-regularization that seemed to hurt model performance in the previous iterations.
+
+The AUC-ROC score for this is 0.886, which is actually slightly *worse* than the untuned logistic regression model. This suggests that while the avg_epa variable is important, the added complexity of the model, possibly from regularization or additional tuning, isn’t necessarily improving performance. It’s possible that the regularization or other hyperparameter choices may be limiting the model’s ability to capture the relationships in the data, or that the original logistic regression model, despite being simpler, is already well-suited to the problem. This discrepancy can indicate that, in this particular case, a more complex model may not be necessary or may even introduce overfitting.
+
+# Best Model Performance
+
+## Boosted Trees
+
+It's important to look at diagnostics to evaluate the performance of one of our tree models, the boosted tree. 
+
+```{r}
+final_bt_model <- finalize_workflow(bt_class_wf, best_bt_class)
+final_bt_model <- fit(final_bt_model, data_train)
+
+final_bt_model |>  extract_fit_parsnip() |> 
+  vip() +
+  theme_minimal()
+
+final_bt_model_test <- augment(final_bt_model, 
+                               data_test) |> 
+  select(win, starts_with(".pred"))
+
+roc_auc(final_bt_model_test, truth = win, .pred_0)
+
+roc_curve(final_bt_model_test, truth = win, .pred_0) |> 
+  autoplot()
+
+conf_mat(final_bt_model_test, truth = win, 
+         .pred_class) |> 
+  autoplot(type = "heatmap")
+```
+When looking at the Variable Importance Plot, we can see clearly that average epa is by FAR the most important predictor in terms of winning, which is consistent in all the EDA and modeling. Following this is rushing attempts, then pass_dropbacks, and then average expected points (Different from expected points added, consult the data dictionary). 
+
+When looking at the auc-roc score of 0.895, this means the model is doing an extremely good job predicting the outcome, wins. The ROC curve also shows the progression of sensitivity and specificity over time, which is performing exactly as intended.
+
+Finally, when looking at the confusion matrix, the model performed extremely well. the rates of prediction, false positive, and false negative were all proportional and even to the data, with great prediction performance.
+
+## Random Forest
+
+Now, let's evaluate the performance of the final model, the random forest!
+
+```{r}
+final_rf_model <- finalize_workflow(rf_class_wf, best_rf_class)
+final_rf_model <- fit(final_rf_model, data_train)
+
+
+final_rf_model_test <- augment(final_rf_model, 
+                               data_test) |> 
+  select(win, starts_with(".pred"))
+
+roc_auc(final_rf_model_test, truth = win, .pred_0)
+
+roc_curve(final_rf_model_test, truth = win, .pred_0) |> 
+  autoplot()
+
+conf_mat(final_rf_model_test, truth = win, 
+         .pred_class) |> 
+  autoplot(type = "heatmap")
+```
+
+The random forest model achieved an AUC-ROC score of 0.893, indicating strong discriminatory power between the classes. This score suggests that the model performs well in distinguishing between the positive and negative classes, with a relatively low likelihood of misclassifying instances. The high AUC also implies that the model’s predictions are generally reliable, making it a promising option for classification tasks. This is once again supported by the roc curve similar to that of the boosted tree, showing a good increase of sensitivity as (1-specificity) increases.
+
+Finally, the confusion matrix shows almost identical performance to the boosted tree, with 2 extra false positives. 
+
+So, ultimately, while our final 2 models were extremely similar, the best performing model was the boosted tree!
+
+
 # Conclusion
 
-- Minimum of two
-paragraphs with complete
-sentences. Should
-summarize the main results
-of the paper, discuss which
-models did best, and briefly
-mention possibilities for
-future models/research.
+In this study, the boosted tree model emerged as the best-performing model, with the highest AUC-ROC score, reflecting its strong ability to classify outcomes correctly. The most important predictors across all models were consistently average expected points added (avg_epa) and rushing attempts, both of which showed a positive association with the outcome. Conversely, pass dropbacks had a negative association with the outcome, indicating that more pass attempts were generally linked to worse performance. The significance of these predictors highlights the importance of advanced metrics like EPA in evaluating team performance. EPA directly measures the impact of a play on the overall game outcome, and higher EPA values typically indicate better team performance. This is particularly evident as negative EPA values occur when the defense performs well, further emphasizing that a higher EPA is almost always indicative of a superior play or strategy.
 
-- There is written
-text all throughout the
-report, narrating and
-describing the analysis and
-plots/tables. Every result or
-plot included in the report
-should have some text
-accompanying it and
-interpreting it. The report
-flows well and can be read
-smoothly, like a paper.
+Looking ahead, future research could explore models that omit avg_epa and instead focus on other key statistics, potentially uncovering new insights. Given that EPA is a relatively new metric in the NFL, it would be valuable to investigate other performance indicators that might interact with EPA or offer additional predictive power. The fact that all models performed well in the early stages suggests that basic metrics like avg_epa and rushing attempts are highly influential, but there may be other underlying factors worth modeling separately. The boosted tree model worked particularly well due to its ability to capture complex interactions between predictors, allowing it to model nonlinear relationships effectively. Its robustness to overfitting and flexibility in handling different types of data made it a suitable choice for this analysis, providing a solid foundation for future research in sports analytics.
+
