@@ -57,6 +57,138 @@ The EDA for this project focuses on understanding and summarizing the rich play-
 To achieve this, I calculated averages for certain continuous metrics which provide a high-level view of a team’s performance over the course of the game. Additionally, I summed other key statistics, such as passing touchdowns, rushing attempts, penalties, etc., to capture the total contributions in each game. This aggregation allows for a clearer picture of the overall game dynamics and simplifies the analysis, making it easier to identify patterns and relationships that can help predict game outcomes. The next section outlines the specific steps taken in the EDA process, focusing on the transformation of the raw play-by-play data into meaningful game-level metrics.
 
 
+## Initial Dataset Creation
+
+The full data transformation process is in the code chunk below. I carefully went through the original dataset and created/selected the columns I was most interested in. For example, when aggregating stats as game data, player information and certain stats like tackles, field goals, and the quarter/time on the clock wouldn't be relevant when aggregated.
+
+The specific features added are expanded on in the comments. I initially filtered out plays like kneels and spikes, and removed NA values for play_type. These values are not actually missing values, but instead represent entries such as "Start of Game" and "3rd Quarter End" - stats that don't matter in modeling.
+
+```{r, eval = F}
+#| code-fold: true
+#| code-summary: "Show the code"
+
+stats <- pbp |> 
+  filter(
+    !play_deleted,
+    !is.na(play_type) & play_type != "qb_kneel" & play_type != "spike"
+  ) |> # Filter out irrelevant plays
+  group_by(game_id, posteam)  |> 
+  summarise(
+    # Starting Features
+    total_epa = sum(epa, na.rm = TRUE), # Sum of EPA in the game
+    avg_epa = mean(epa, na.rm = TRUE),
+    total_wpa = sum(wpa, na.rm = TRUE),
+    avg_wpa = mean(wpa, na.rm = TRUE),
+    pass_touchdowns = sum(pass_touchdown, na.rm = TRUE),
+    rush_touchdowns = sum(rush_touchdown, na.rm = TRUE),
+    rushing_attempts = sum(rush_attempt, na.rm = TRUE),
+    pass_dropbacks = sum(pass_attempt, na.rm = TRUE),
+    success_rate = mean(success, na.rm = TRUE),
+    
+    # Adjusted Penalty Yard Calculation
+    penalties_committed = sum(!is.na(penalty_yards[penalty_team == posteam]), na.rm = TRUE),
+    penalty_yards_committed = sum(penalty_yards[penalty_team == posteam], na.rm = TRUE),
+    
+    # Points Scored and Allowed
+    points_scored = ifelse(unique(posteam) == unique(home_team), max(home_score, na.rm = TRUE), max(away_score, na.rm = TRUE)),
+    points_allowed = ifelse(unique(posteam) == unique(home_team), max(away_score, na.rm = TRUE), max(home_score, na.rm = TRUE)),
+
+    # Yardage and Play Features
+    passing_yards = sum(passing_yards, na.rm = TRUE),
+    rushing_yards = sum(rushing_yards, na.rm = TRUE),
+    yards_gained = sum(yards_gained, na.rm = TRUE),
+    yards_after_catch = sum(yards_after_catch, na.rm = TRUE),
+
+    # EPA Features
+    total_air_epa = sum(air_epa, na.rm = TRUE),
+    avg_air_epa = mean(air_epa, na.rm = TRUE),
+    total_yac_epa = sum(yac_epa, na.rm = TRUE),
+    avg_yac_epa = mean(yac_epa, na.rm = TRUE),
+    total_ep = sum(ep, na.rm = TRUE),
+    avg_ep = mean(ep, na.rm = TRUE),
+
+    # Adjusted Return Stats
+    return_touchdowns = sum(
+      case_when(
+        play_type == "kickoff" & return_team == posteam ~ return_touchdown,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    return_yards = sum(
+      case_when(
+        play_type == "kickoff" & return_team == posteam ~ return_yards,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    
+    # Sacks Taken
+    sacks_taken = sum(sack, na.rm = TRUE),
+    
+    # Completion-Based EPA
+    comp_air_epa_sum = sum(air_epa[complete_pass == 1], na.rm = TRUE), # Sum of air EPA on completions
+    comp_air_epa_avg = mean(air_epa[complete_pass == 1], na.rm = TRUE), # Average of air EPA on completions
+    comp_yac_epa_sum = sum(yac_epa[complete_pass == 1], na.rm = TRUE), # Sum of YAC EPA on completions
+    comp_yac_epa_avg = mean(yac_epa[complete_pass == 1], na.rm = TRUE), # Average of YAC EPA on completions
+    
+    # Completion Probability Metrics
+    avg_cp = mean(cp, na.rm = TRUE), # Average completion probability
+    avg_cpoe = mean(cpoe, na.rm = TRUE), # Average completion percentage over expected
+    
+    .groups = "drop"
+  ) |> 
+  mutate(
+    win = case_when(
+      points_scored > points_allowed ~ 1,
+      points_scored < points_allowed ~ 0,
+      points_scored == points_allowed ~ NA_real_
+    )
+  ) |> 
+
+# Defense-related (opponent stats, punt returns, and penalties committed against posteam)
+defteam_stats <- pbp |> 
+  filter(
+    !play_deleted,
+    !is.na(play_type) & play_type != "qb_kneel" & play_type != "spike"
+  ) |> 
+  group_by(game_id, defteam) |> 
+  summarise(
+    penalties_committed_by_opponent = sum(!is.na(penalty_yards[penalty_team == defteam]), na.rm = TRUE),
+    penalty_yards_committed_by_opponent = sum(penalty_yards[penalty_team == defteam], na.rm = TRUE),
+    punt_return_touchdowns = sum(
+      case_when(
+        play_type == "punt" & return_team == defteam ~ return_touchdown,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    punt_return_yards = sum(
+      case_when(
+        play_type == "punt" & return_team == defteam ~ return_yards,
+        TRUE ~ 0
+      ),
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) |> 
+  rename(posteam = defteam) |>  # Rename for consistency when merging with posteam stats
+  filter(!is.na(posteam))
+
+# Merge posteam and defteam stats
+final_stats <- stats |> 
+  left_join(defteam_stats, by = c("game_id", "posteam")) |> 
+  mutate(
+    net_penalty_yards = penalty_yards_committed_by_opponent - penalty_yards_committed,
+    win = case_when(
+      points_scored > points_allowed ~ 1,
+      points_scored < points_allowed ~ 0,
+      points_scored == points_allowed ~ NA_real_
+    )
+  ) |> 
+  filter(!is.na(posteam), !is.na(win)) # Remove NA values for posteams and ties
+```
+
 Reading in the data:
 ```{r}
 data <- read_csv("../data/stats.csv", show_col_types = F)
@@ -97,13 +229,30 @@ data |>
 
 As expected, in wins, the distribution of average epa has a higher median, higher set of values for the range, and is larger overall.
 
-Another extremely important thing is looking for correlation between my predictors. As mentioned, the "data/intro-eda.qmd" file contains a much more in-depth look at predictors and predictor selection, as many variables were removed due to high correlation with each other. For context, this is because I originally added averages and totals for most epa-related stats (This include yards-after-catch epa, rush-epa, qb-epa, and more). These stats are calculated the same as EPA, but are only related to the specific type of play. For example, on a rush play (Where the quarterback hands the ball off to a running back, and does not pass the ball) there won't be a qb_epa value, but there is a rush_epa. And vice versa, on a pass play, there isn't a rush_epa value, but there is a qb_epa.
 
-I got rid of all the total_epa values since a) they were extremely highly correlated with the avg_epa values (as avg_epa is just total_epa / # of plays), and b) avg_epa is more important because total_epa is skewed by the number of plays run. For example, a team with 20 pass plays but each of them being extremely good plays would have a high average epa. A team with 50 pass plays, each being half as good in EPA terms as the one with 20 pass plays would have half the avg_epa, but more total_epa since the volume of plays is more than double the other team. 
+### Further Dataset modification
+
+Another extremely important thing is looking for correlation between my predictors. As mentioned, the many variables were removed due to high correlation with each other. For context, this is because I originally added averages and totals for most epa-related stats (This include yards-after-catch epa, rush-epa, qb-epa, and more). These stats are calculated the same as EPA, but are only related to the specific type of play. For example, on a rush play (Where the quarterback hands the ball off to a running back, and does not pass the ball) there won't be a qb_epa value, but there is a rush_epa. And vice versa, on a pass play, there isn't a rush_epa value, but there is a qb_epa.
+
+I got rid of all the total_epa values since a) they were extremely highly correlated with the avg_epa values (as avg_epa is just total_epa / # of plays), and b) avg_epa is more important because total_epa is skewed by the number of plays run. For example, a team with 20 pass plays but each of them being extremely good plays would have a high average epa. A team with 50 pass plays, each being half as good in EPA terms as the one with 20 pass plays would have half the avg_epa, but more total_epa since the volume of plays is more than double the other team. This data transformation is below:
+
+```{r, eval = FALSE}
+final_stats <- final_stats |> 
+  select(-total_epa, -total_wpa, -total_air_epa, -total_yac_epa, -total_ep, -comp_air_epa_sum, -comp_yac_epa_sum)
+
+
+final_stats <- final_stats |> 
+  mutate(
+    win = as.factor(win),
+    return_touchdowns = return_touchdowns + punt_return_touchdowns,
+    return_yards = return_yards + punt_return_yards
+  ) |> 
+  select(-punt_return_touchdowns, -punt_return_yards, -net_penalty_yards, -penalties_committed, -points_scored, -penalties_committed_by_opponent, -yards_gained, -success_rate)
+```
 
 Looking at the correlation AFTER getting rid of many predictors, we get the following correlation plot:
 
-```{r}
+```{r, warning = F, message = F}
 cor_plot <- data |> 
   select(-game_id, posteam) |> 
   correlate()
@@ -163,17 +312,10 @@ data |>
   )
 ```
 
-It helps that many of the predictors are roughly normally distributed, such as passing yards and average epa. This is to be expected, as data availability is no issue. Additionally, some predictors may be skewed, such as passing yards, but this is expected intuitively and the skew is not major with any of the predictor, when considering outliers may skew certain features.
+It helps that many of the predictors are roughly normally distributed, such as passing yards and average epa. This is to be expected, as data availability is no issue. Additionally, some predictors may be skewed, such as passing yards, but this is expected intuitively and the skew is not major with any of the predictors, when considering outliers may skew certain features.
 
-
-**At least 3 plots or tables are included in the EDA. They can be the same type or different types. For example, a correlation matrix, a histogram, a scatterplot, box plot, etc.**
-
-
-**There is written text all throughout the EDA section, narrating and describing the analysis and plots/tables. Every result or plot included in the report should have some text accompanying it and interpreting it.**
 
 ### Missing Data
-
-**The amount and pattern of missing data in the dataset is described. Missing data is handled appropriately. If there is no missing data, the report should specifically mention this.**
 
 The data was already cleaned and contained very little missing data, as NAs are used in certain situations to represent values that don't apply. For confirmation, the missingness data is charted below: 
 
@@ -213,7 +355,7 @@ nfl_recipe <- recipe(win ~ ., data = data_train) |>
   step_normalize(all_predictors())
 ```
 
-All the predictors are numerical, which means no dummy encoding is necessary. Additionally, some columns are chosen in step_rm(). Posteam and game_id are identifiers in the data, but are not related to game statistics. Points_allowed is chosen here as I originally included both points_scored and points_allowed in the model, and the model was predicting outcomes with 100% accuracy, and only predictings 1 or 0 for the values. This meant, since the results could be deteremined by just looking at 2 columns, it was messing up modelling. Additionally, I got rid of net_penalty_yards as it's effectively almost a linear combination of penalty_yards committed and penalty_yards allowed (With a slight modification for defensive penalties), but I didn't see it being useful in the model. Finally, I got rid of avg_air_epa, as a hypothetical epa for incomplete plays would be interesting to analyze on its own (It would correlate to teams that are extremely aggressive but don't convert their chance), I didn't see it being helpful to interpret predicting wins in a model.
+All the predictors are numerical, which means no dummy encoding is necessary. Additionally, some columns are chosen in step_rm(). Posteam and game_id are identifiers in the data, but are not related to game statistics. Points_allowed is chosen here as I originally included both points_scored and points_allowed in the model, and the model was predicting outcomes with 100% accuracy, and only predictings 1 or 0 for the values. This meant, since the results could be determined by just looking at 2 columns, it was messing up modelling. Additionally, I got rid of net_penalty_yards as it's effectively almost a linear combination of penalty_yards committed and penalty_yards allowed (With a slight modification for defensive penalties), but I didn't see it being useful in the model. Finally, I got rid of avg_air_epa, as a hypothetical epa for incomplete plays would be interesting to analyze on its own (It would correlate to teams that are extremely aggressive but don't convert their chance), I didn't see it being helpful to interpret predicting wins in a model.
 
 
 # Model Fitting
@@ -242,12 +384,12 @@ log_fit |>
   tidy()
 ```
 
-This table contains the estimates for the various predictors in the model. This is definitely important to me as, no matter the performance of the model, it shows me what predictors are most important in an inference setting. As shown, rushing attempts and avg_epa were postively associated with winning - this makes sense in context, as having a high avg_epa means you ran a lot of plays that are expected to add points, and more rushing attempts, as mentioned earlier, usually means you were trying to run down the clock in a blowout victory.
+This table contains the estimates for the various predictors in the model. This is definitely important to me as, no matter the performance of the model, it shows me what predictors are most important in an inference setting. As shown, rushing attempts and avg_epa were positively associated with winning - this makes sense in context, as having a high avg_epa means you ran a lot of plays that are expected to add points, and more rushing attempts, as mentioned earlier, usually means you were trying to run down the clock in a blowout victory.
 
 On the other hand, pass_dropbacks had a negative association with winning. This also makes sense, as teams that are throwing the ball a lot often do so because they're losing, most often by multiple scores. The teams that had many dropbacks (Effectively passing plays) did so because they were losing, and so likely lost that game.
 
 ```{r}
-augment(log_fit, new_data = data_train) |> 
+augment(log_fit, new_data = data_test) |> 
   conf_mat(truth = win, estimate = .pred_class) |> 
   autoplot(type = "heatmap")
 
@@ -287,6 +429,7 @@ rf_grid <- grid_regular(mtry(range = c(1, 6)),
 
 
 ```{r, eval=F}
+# grid provided for reference, evaluate in random-forest.qmd
 tune_class <- tune_grid(
   rf_class_wf,
   resamples = data_folds,
@@ -341,7 +484,7 @@ tune_bt_class <- tune_grid(
 )
 ```
 
-I saved this model separately as well, so that I could load it in quickly without needed to rerun the model.
+I saved this model separately as well, so that I could load it in quickly without needing to rerun the model.
 ```{r, warning = F}
 load("tune_bt_class.rda")
 
@@ -393,7 +536,7 @@ augment(tree_final_fit, new_data = data_test) |>
 ```
 As the cost-complexity parameter increased, the model’s ROC AUC and accuracy decreased, especially after a threshold of around 0.05. This suggests that higher values of the cost-complexity parameter led to more regularization, which likely caused the model to become overly simplistic, reducing its ability to effectively differentiate between classes. Additionally, the increase in Brier score past this point indicates that the model’s predicted probabilities became less accurate, reflecting a decline in its overall predictive performance as regularization intensified.
 
-The AUC-ROC from the best parameter selection was 0.833 in this model, which corresponds with pretty good performance for the model, however not as good as the other 3. The tree diagram is provided here, however this is difficult to interpret in context as this contains the scaled and centered variables, so the data would have to be unscaled to look at the real numbers in context of the game. Clearly, epa and rushing attempts heavily decided guesses in dataset however, as over 50% of the data in the tree was guessed just using combinations of those two variables in certain ranges.
+The AUC-ROC from the best parameter selection was 0.833 in this model, which corresponds with pretty good performance for the model, however not as good as the other 3. The tree diagram is provided here, however this is difficult to interpret in context as this contains the scaled and centered variables, so the data would have to be unscaled to look at the real numbers in context of the game. Clearly, epa and rushing attempts heavily decided guesses in the dataset however, as over 50% of the data in the tree was guessed just using combinations of those two variables in certain ranges.
 
 
 # Tuning Parameters
@@ -403,7 +546,6 @@ After applying the logistic regression, I wanted to tune the parameters and pote
 ### Tuning Regression
 
 ```{r, warning = F}
-# Tuning
 log_reg_tune <- logistic_reg(mixture = tune(), 
                               penalty = tune()) |> 
   set_mode("classification") |> 
@@ -425,7 +567,11 @@ tune_log_mod <- tune_grid(
 )
 
 autoplot(tune_log_mod)
+```
 
+As shown in the autoplot, as the amount of regularization increased, the accuracy and ROC AUC appeared to decrease while the Brier score for classification (brier_class) increased. This indicates that the model’s performance deteriorated with stronger regularization, suggesting that excessive regularization may have led to underfitting. With higher regularization, the model likely became too simplistic, reducing its ability to correctly identify patterns in the data, hence the decline in accuracy and ROC AUC. Additionally, the increase in the Brier score suggests that the model’s predicted probabilities were less reliable, with predictions becoming more uncertain and less calibrated.
+
+```{r}
 # Selection of Tuned
 
 best_log_mod <- select_by_one_std_err(tune_log_mod,
@@ -434,9 +580,11 @@ best_log_mod <- select_by_one_std_err(tune_log_mod,
                           mixture
                           )
 best_log_mod
+```
 
-#Generalization
+This is further supported by the best model having a penalty of 0 and a mixture of 0, meaning the model was effectively using no regularization and a purely lasso (L1) approach, which allowed it to fit the data more flexibly without constraints. A penalty of 0 suggests that the model was not penalizing the size of the coefficients, allowing the model to better capture the underlying patterns in the data. Similarly, a mixture of 0 indicates that the model was not incorporating any elastic net regularization, further favoring a more straightforward, unregularized lasso model. This likely contributed to the improved performance, as it avoided the over-regularization that seemed to hurt model performance in the previous iterations.
 
+```{r}
 en_final_mod <- finalize_workflow(tuned_wflow,
                                       best_log_mod)
 
@@ -446,9 +594,7 @@ en_final_mod <- fit(en_final_mod,
 augment(en_final_mod, new_data = data_train) |> 
   roc_auc(win, .pred_0)
 ```
-As shown in the autoplot, as the amount of regularization increased, the accuracy and ROC AUC appeared to decrease while the Brier score for classification (brier_class) increased. This indicates that the model’s performance deteriorated with stronger regularization, suggesting that excessive regularization may have led to underfitting. With higher regularization, the model likely became too simplistic, reducing its ability to correctly identify patterns in the data, hence the decline in accuracy and ROC AUC. Additionally, the increase in the Brier score suggests that the model’s predicted probabilities were less reliable, with predictions becoming more uncertain and less calibrated.
 
-This is further supported by the best model having a penalty of 0 and a mixture of 0, meaning the model was effectively using no regularization and a purely lasso (L1) approach, which allowed it to fit the data more flexibly without constraints. A penalty of 0 suggests that the model was not penalizing the size of the coefficients, allowing the model to better capture the underlying patterns in the data. Similarly, a mixture of 0 indicates that the model was not incorporating any elastic net regularization, further favoring a more straightforward, unregularized lasso model. This likely contributed to the improved performance, as it avoided the over-regularization that seemed to hurt model performance in the previous iterations.
 
 The AUC-ROC score for this is 0.886, which is actually slightly *worse* than the untuned logistic regression model. This suggests that while the avg_epa variable is important, the added complexity of the model, possibly from regularization or additional tuning, isn’t necessarily improving performance. It’s possible that the regularization or other hyperparameter choices may be limiting the model’s ability to capture the relationships in the data, or that the original logistic regression model, despite being simpler, is already well-suited to the problem. This discrepancy can indicate that, in this particular case, a more complex model may not be necessary or may even introduce overfitting.
 
@@ -465,7 +611,11 @@ final_bt_model <- fit(final_bt_model, data_train)
 final_bt_model |>  extract_fit_parsnip() |> 
   vip() +
   theme_minimal()
+```
 
+When looking at the Variable Importance Plot, we can see clearly that average epa is by FAR the most important predictor in terms of winning, which is consistent in all the EDA and modeling. Following this is rushing attempts, then pass_dropbacks, and then average expected points (Different from expected points added, consult the data dictionary). 
+
+```{r}
 final_bt_model_test <- augment(final_bt_model, 
                                data_test) |> 
   select(win, starts_with(".pred"))
@@ -474,16 +624,18 @@ roc_auc(final_bt_model_test, truth = win, .pred_0)
 
 roc_curve(final_bt_model_test, truth = win, .pred_0) |> 
   autoplot()
+```
 
+When looking at the auc-roc score of 0.893, this means the model is doing an extremely good job predicting the outcome, wins. The ROC curve also shows the progression of sensitivity and specificity over time, which is performing exactly as intended.
+
+```{r}
 conf_mat(final_bt_model_test, truth = win, 
          .pred_class) |> 
   autoplot(type = "heatmap")
 ```
-When looking at the Variable Importance Plot, we can see clearly that average epa is by FAR the most important predictor in terms of winning, which is consistent in all the EDA and modeling. Following this is rushing attempts, then pass_dropbacks, and then average expected points (Different from expected points added, consult the data dictionary). 
 
-When looking at the auc-roc score of 0.895, this means the model is doing an extremely good job predicting the outcome, wins. The ROC curve also shows the progression of sensitivity and specificity over time, which is performing exactly as intended.
 
-Finally, when looking at the confusion matrix, the model performed extremely well. the rates of prediction, false positive, and false negative were all proportional and even to the data, with great prediction performance.
+Finally, when looking at the confusion matrix, the model performed extremely well. The rates of prediction, false positive, and false negative were all proportional and even to the data, with great prediction performance, with an error rate of ~ 0.2.
 
 ## Random Forest
 
@@ -502,22 +654,24 @@ roc_auc(final_rf_model_test, truth = win, .pred_0)
 
 roc_curve(final_rf_model_test, truth = win, .pred_0) |> 
   autoplot()
+```
 
+The random forest model achieved an AUC-ROC score of 0.894, indicating strong discriminatory power between the classes. This score suggests that the model performs well in distinguishing between the positive and negative classes, with a relatively low likelihood of misclassifying instances. The high AUC also implies that the model’s predictions are generally reliable, making it a promising option for classification tasks. This is once again supported by the roc curve similar to that of the boosted tree, showing a good increase of sensitivity as (1-specificity) increases.
+
+```{r}
 conf_mat(final_rf_model_test, truth = win, 
          .pred_class) |> 
   autoplot(type = "heatmap")
 ```
 
-The random forest model achieved an AUC-ROC score of 0.893, indicating strong discriminatory power between the classes. This score suggests that the model performs well in distinguishing between the positive and negative classes, with a relatively low likelihood of misclassifying instances. The high AUC also implies that the model’s predictions are generally reliable, making it a promising option for classification tasks. This is once again supported by the roc curve similar to that of the boosted tree, showing a good increase of sensitivity as (1-specificity) increases.
+Finally, the confusion matrix shows almost identical performance to the boosted tree, with 2 extra false positives. This has an error rate of ~0.19 as well, pointing to great performance.
 
-Finally, the confusion matrix shows almost identical performance to the boosted tree, with 2 extra false positives. 
-
-So, ultimately, while our final 2 models were extremely similar, the best performing model was the boosted tree!
+So, ultimately, while our final 2 models were extremely similar, the best performing model was the random forest!
 
 
 # Conclusion
 
-In this study, the boosted tree model emerged as the best-performing model, with the highest AUC-ROC score, reflecting its strong ability to classify outcomes correctly. The most important predictors across all models were consistently average expected points added (avg_epa) and rushing attempts, both of which showed a positive association with the outcome. Conversely, pass dropbacks had a negative association with the outcome, indicating that more pass attempts were generally linked to worse performance. The significance of these predictors highlights the importance of advanced metrics like EPA in evaluating team performance. EPA directly measures the impact of a play on the overall game outcome, and higher EPA values typically indicate better team performance. This is particularly evident as negative EPA values occur when the defense performs well, further emphasizing that a higher EPA is almost always indicative of a superior play or strategy.
+In this study, the random forest model emerged as the best-performing model, with boosted trees with the highest AUC-ROC score, reflecting its strong ability to classify outcomes correctly. The most important predictors across all models were consistently average expected points added (avg_epa) and rushing attempts, both of which showed a positive association with the outcome. Conversely, pass dropbacks had a negative association with the outcome, indicating that more pass attempts were generally linked to worse performance. The significance of these predictors highlights the importance of advanced metrics like EPA in evaluating team performance. EPA directly measures the impact of a play on the overall game outcome, and higher EPA values typically indicate better team performance. This is particularly evident as negative EPA values occur when the defense performs well, further emphasizing that a higher EPA is almost always indicative of a superior play or strategy.
 
 Looking ahead, future research could explore models that omit avg_epa and instead focus on other key statistics, potentially uncovering new insights. Given that EPA is a relatively new metric in the NFL, it would be valuable to investigate other performance indicators that might interact with EPA or offer additional predictive power. The fact that all models performed well in the early stages suggests that basic metrics like avg_epa and rushing attempts are highly influential, but there may be other underlying factors worth modeling separately. The boosted tree model worked particularly well due to its ability to capture complex interactions between predictors, allowing it to model nonlinear relationships effectively. Its robustness to overfitting and flexibility in handling different types of data made it a suitable choice for this analysis, providing a solid foundation for future research in sports analytics.
 
