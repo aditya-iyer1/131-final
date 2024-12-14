@@ -331,6 +331,8 @@ As this is a classification setting, I chose 4 main models - Logistic Regression
 
 Each model will be tuned using 5-fold cross-validation to find the best set of hyperparameters. I will use the tune_grid() function to evaluate combinations of hyperparameters and select the best-performing model on the training set. Here's the generic data split and folds I used to train the models.
 
+I used k-fold cross-validation to help with potential issues of unbalanced data, stratified on the outcome variable, `win`.
+
 ```{r}
 set.seed(3435) #For reproducibility
 
@@ -389,10 +391,6 @@ This table contains the estimates for the various predictors in the model. This 
 On the other hand, pass_dropbacks had a negative association with winning. This also makes sense, as teams that are throwing the ball a lot often do so because they're losing, most often by multiple scores. The teams that had many dropbacks (Effectively passing plays) did so because they were losing, and so likely lost that game.
 
 ```{r}
-augment(log_fit, new_data = data_test) |> 
-  conf_mat(truth = win, estimate = .pred_class) |> 
-  autoplot(type = "heatmap")
-
 # Generate predictions with probabilities
 log_predictions <- augment(log_fit, new_data = data_train)
 
@@ -403,7 +401,7 @@ roc_auc_metric <- log_predictions |>
 # View the result
 roc_auc_metric
 ```
-Looking at the confusion matrix, we can see the model does a pretty good job predicting the right classes. Wins and Losses are evenly distributed, and the predictions and error rates for the model are also roughly evenly distributed. The model has a AUC score of 0.889, which corresponds to pretty good performance.
+The model has a AUC score of 0.889, which corresponds to pretty good performance.
 
 ## Random Forest
 
